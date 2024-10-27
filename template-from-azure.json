@@ -1,0 +1,371 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "name": {
+            "type": "string"
+        },
+        "location": {
+            "type": "string"
+        },
+        "tagsByResource": {
+            "type": "object",
+            "defaultValue": {}
+        },
+        "injectionType": {
+            "type": "string",
+            "defaultValue": "VNET",
+            "allowedValues": [
+                "VNET",
+                "VWAN"
+            ]
+        },
+        "virtualHubId": {
+            "type": "string",
+            "defaultValue": "[format('{0}-vhub', parameters('name'))]"
+        },
+        "nvaName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-nva', parameters('name'))]"
+        },
+        "virtualNetworkNewOrExisting": {
+            "type": "string",
+            "defaultValue": "existing",
+            "allowedValues": [
+                "new",
+                "existing"
+            ]
+        },
+        "virtualNetworkName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-vnet', parameters('name'))]"
+        },
+        "virtualNetworkResourceGroup": {
+            "type": "string",
+            "defaultValue": ""
+        },
+        "virtualNetworkAddressPrefix": {
+            "type": "string",
+            "defaultValue": "10.0.0.0/16"
+        },
+        "trustSubnetName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-vnet-trust', parameters('name'))]"
+        },
+        "trustSubnetAddressPrefix": {
+            "type": "string",
+            "defaultValue": "10.0.128.0/17"
+        },
+        "untrustSubnetName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-vnet-untrust', parameters('name'))]"
+        },
+        "untrustSubnetAddressPrefix": {
+            "type": "string",
+            "defaultValue": "10.0.0.0/17"
+        },
+        "newOrExistingPublicIPAddress": {
+            "type": "string",
+            "defaultValue": "existing",
+            "allowedValues": [
+                "new",
+                "existing"
+            ]
+        },
+        "publicIPAddressName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-ip', parameters('name'))]"
+        },
+        "existingPublicIPAddress": {
+            "type": "array",
+            "defaultValue": []
+        },
+        "trustedRanges": {
+            "type": "array",
+            "defaultValue": []
+        },
+        "additionalPrefix": {
+            "type": "bool",
+            "defaultValue": false
+        },
+        "egressNatBool": {
+            "type": "bool",
+            "defaultValue": true
+        },
+        "usePublicNatIPAddresses": {
+            "type": "bool",
+            "defaultValue": true
+        },
+        "newOrExistingNATeIPAddress": {
+            "type": "string",
+            "defaultValue": "existing",
+            "allowedValues": [
+                "new",
+                "existing"
+            ]
+        },
+        "natEPublicIPAddressName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-nat-ip', parameters('name'))]"
+        },
+        "natEExistingPublicIPAddress": {
+            "type": "array",
+            "defaultValue": []
+        },
+        "isPanoramaManaged": {
+            "type": "string",
+            "defaultValue": "FALSE",
+            "allowedValues": [
+                "TRUE",
+                "FALSE"
+            ]
+        },
+        "panoramaConfigString": {
+            "type": "string",
+            "defaultValue": ""
+        },
+        "associatedRuleStackNewOrExisting": {
+            "type": "string",
+            "defaultValue": "new",
+            "allowedValues": [
+                "new",
+                "existing"
+            ]
+        },
+        "associatedRuleStackName": {
+            "type": "string",
+            "defaultValue": "[format('{0}-lrs', parameters('name'))]"
+        },
+        "associatedRuleStackLocation": {
+            "type": "string",
+            "defaultValue": "[parameters('location')]"
+        },
+        "associatedRuleStackResourceGroup": {
+            "type": "string",
+            "defaultValue": "[format('rg-{0}-lrs', parameters('name'))]"
+        },
+        "ruleStackDefaultMode": {
+            "type": "string",
+            "defaultValue": "NONE",
+            "allowedValues": [
+                "NONE",
+                "IPS",
+                "FIREWALL"
+            ]
+        },
+        "dnsProxyStateSelection": {
+            "type": "string",
+            "defaultValue": "DISABLED",
+            "allowedValues": [
+                "DISABLED",
+                "ENABLED"
+            ]
+        },
+        "dnsProxySelection": {
+            "type": "string",
+            "defaultValue": "AZURE",
+            "allowedValues": [
+                "AZURE",
+                "CUSTOM"
+            ]
+        },
+        "dnsServers": {
+            "type": "array",
+            "defaultValue": []
+        },
+        "mpOffer": {
+            "type": "object",
+            "defaultValue": {}
+        },
+        "mpOfferId": {
+            "type": "string",
+            "defaultValue": "panw-cloud-ngfw-payg"
+        }
+    },
+    "variables": {
+        "copy": [
+            {
+                "name": "dnsServersList",
+                "count": "[length(parameters('dnsServers'))]",
+                "input": {
+                    "address": "[parameters('dnsServers')[copyIndex('dnsServersList')].dnsIp]"
+                }
+            },
+            {
+                "name": "publicIPAddressIds",
+                "count": "[length(parameters('existingPublicIPAddress'))]",
+                "input": {
+                    "resourceId": "[parameters('existingPublicIPAddress')[copyIndex('publicIPAddressIds')]]"
+                }
+            },
+            {
+                "name": "NATIPAddressIds",
+                "count": "[length(parameters('natEExistingPublicIPAddress'))]",
+                "input": {
+                    "resourceId": "[parameters('natEExistingPublicIPAddress')[copyIndex('NATIPAddressIds')]]"
+                }
+            }
+        ],
+        "dnsSettings": "[if(equals(parameters('dnsProxyStateSelection'), 'DISABLED'), createObject('enableDnsProxy', 'DISABLED'), if(equals(parameters('dnsProxySelection'), 'AZURE'), createObject('enableDnsProxy', 'ENABLED', 'enabledDnsType', 'AZURE'), createObject('enableDnsProxy', 'ENABLED', 'enabledDnsType', 'CUSTOM', 'dnsServers', variables('dnsServersList'))))]",
+        "ipTag": "[if(contains(parameters('tagsByResource'), 'Microsoft.Network/publicIPAddresses'), parameters('tagsByResource')['Microsoft.Network/publicIPAddresses'], createObject())]",
+        "publicIPAddressId": [
+            {
+                "resourceId": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIPAddressName'))]"
+            }
+        ],
+        "publicIps": "[if(equals(parameters('newOrExistingPublicIPAddress'), 'new'), variables('publicIPAddressId'), variables('publicIPAddressIds'))]",
+        "natIPAddressId": [
+            {
+                "resourceId": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('natEPublicIPAddressName'))]"
+            }
+        ],
+        "egressNatIp": "[if(parameters('usePublicNatIPAddresses'), variables('publicIps'), if(equals(parameters('newOrExistingNATeIPAddress'), 'new'), variables('natIPAddressId'), variables('NATIPAddressIds')))]",
+        "nvaTag": "[if(contains(parameters('tagsByResource'), 'Microsoft.Network/networkvirtualappliances'), parameters('tagsByResource')['Microsoft.Network/networkvirtualappliances'], createObject())]",
+        "nvaId": "[if(equals(parameters('injectionType'), 'VWAN'), resourceId('Microsoft.Network/networkvirtualappliances', parameters('nvaName')), parameters('nvaName'))]",
+        "nsgTag": "[if(contains(parameters('tagsByResource'), 'Microsoft.Network/networkSecurityGroups'), parameters('tagsByResource')['Microsoft.Network/networkSecurityGroups'], createObject())]",
+        "nsgName": "[format('{0}-nsg', parameters('virtualNetworkName'))]",
+        "vnetTag": "[if(contains(parameters('tagsByResource'), 'Microsoft.Network/virtualNetworks'), parameters('tagsByResource')['Microsoft.Network/virtualNetworks'], createObject())]",
+        "vnetId": "[if(equals(parameters('injectionType'), 'VNET'), resourceId(parameters('virtualNetworkResourceGroup'), 'Microsoft.Network/virtualNetworks', parameters('virtualNetworkName')), parameters('virtualNetworkName'))]",
+        "trustSubnetId": "[resourceId(parameters('virtualNetworkResourceGroup'), 'Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('trustSubnetName'))]",
+        "untrustSubnetId": "[resourceId(parameters('virtualNetworkResourceGroup'), 'Microsoft.Network/virtualNetworks/subnets', parameters('virtualNetworkName'), parameters('untrustSubnetName'))]",
+        "firewallTag": "[if(contains(parameters('tagsByResource'), 'PaloAltoNetworks.Cloudngfw/firewalls'), parameters('tagsByResource')['PaloAltoNetworks.Cloudngfw/firewalls'], createObject())]",
+        "associatedRuleStackId": "[resourceId(parameters('associatedRuleStackResourceGroup'), 'PaloAltoNetworks.Cloudngfw/localRulestacks', parameters('associatedRuleStackName'))]",
+        "networkProfile": "[if(equals(parameters('injectionType'), 'VWAN'), createObject('vwanConfiguration', createObject('networkVirtualApplianceId', variables('nvaId'), 'vHub', createObject('resourceId', parameters('virtualHubId'))), 'networkType', parameters('injectionType'), 'publicIps', variables('publicIps'), 'enableEgressNat', if(parameters('egressNatBool'), 'ENABLED', 'DISABLED'), 'egressNatIp', if(parameters('egressNatBool'), variables('egressNatIp'), createArray()), 'trustedRanges', if(parameters('additionalPrefix'), parameters('trustedRanges'), null())), createObject('vnetConfiguration', createObject('vnet', createObject('resourceId', variables('vnetId')), 'trustSubnet', createObject('resourceId', variables('trustSubnetId')), 'unTrustSubnet', createObject('resourceId', variables('untrustSubnetId'))), 'networkType', parameters('injectionType'), 'publicIps', variables('publicIps'), 'enableEgressNat', if(parameters('egressNatBool'), 'ENABLED', 'DISABLED'), 'egressNatIp', if(parameters('egressNatBool'), variables('egressNatIp'), createArray()), 'trustedRanges', if(parameters('additionalPrefix'), parameters('trustedRanges'), null())))]"
+    },
+    "resources": [
+        {
+            "condition": "[equals(parameters('newOrExistingPublicIPAddress'), 'new')]",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('publicIPAddressName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "Standard"
+            },
+            "tags": "[variables('ipTag')]",
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "condition": "[and(not(parameters('usePublicNatIPAddresses')), equals(parameters('newOrExistingNATeIPAddress'), 'new'))]",
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('natEPublicIPAddressName')]",
+            "location": "[parameters('location')]",
+            "sku": {
+                "name": "Standard"
+            },
+            "tags": "[variables('ipTag')]",
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "condition": "[equals(parameters('injectionType'), 'VWAN')]",
+            "type": "Microsoft.Network/networkVirtualAppliances",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('nvaName')]",
+            "location": "[parameters('location')]",
+            "tags": "[variables('nvaTag')]",
+            "properties": {
+                "virtualHub": {
+                    "id": "[parameters('virtualHubId')]"
+                },
+                "delegation": {
+                    "serviceName": "PaloAltoNetworks.Cloudngfw/firewalls"
+                }
+            }
+        },
+        {
+            "condition": "[and(equals(parameters('injectionType'), 'VNET'), equals(parameters('virtualNetworkNewOrExisting'), 'new'))]",
+            "type": "Microsoft.Network/networkSecurityGroups",
+            "apiVersion": "2020-11-01",
+            "name": "[variables('nsgName')]",
+            "location": "[parameters('location')]",
+            "tags": "[variables('nsgTag')]",
+            "properties": {}
+        },
+        {
+            "condition": "[and(equals(parameters('injectionType'), 'VNET'), equals(parameters('virtualNetworkNewOrExisting'), 'new'))]",
+            "type": "Microsoft.Network/virtualNetworks",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('virtualNetworkName')]",
+            "location": "[parameters('location')]",
+            "tags": "[variables('vnetTag')]",
+            "properties": {
+                "addressSpace": {
+                    "addressPrefixes": [
+                        "[parameters('virtualNetworkAddressPrefix')]"
+                    ]
+                },
+                "subnets": [
+                    {
+                        "name": "[parameters('untrustSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('untrustSubnetAddressPrefix')]",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+                            },
+                            "delegations": [
+                                {
+                                    "name": "PaloAltoNetworks.Cloudngfw/firewalls",
+                                    "properties": {
+                                        "serviceName": "PaloAltoNetworks.Cloudngfw/firewalls"
+                                    }
+                                }
+                            ]
+                        }
+                    },
+                    {
+                        "name": "[parameters('trustSubnetName')]",
+                        "properties": {
+                            "addressPrefix": "[parameters('trustSubnetAddressPrefix')]",
+                            "networkSecurityGroup": {
+                                "id": "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+                            },
+                            "delegations": [
+                                {
+                                    "name": "PaloAltoNetworks.Cloudngfw/firewalls",
+                                    "properties": {
+                                        "serviceName": "PaloAltoNetworks.Cloudngfw/firewalls"
+                                    }
+                                }
+                            ]
+                        }
+                    }
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/networkSecurityGroups', variables('nsgName'))]"
+            ]
+        },
+        {
+            "condition": "[and(equals(parameters('isPanoramaManaged'), 'FALSE'), equals(parameters('associatedRuleStackNewOrExisting'), 'new'))]",
+            "type": "PaloAltoNetworks.Cloudngfw/localRulestacks",
+            "apiVersion": "2024-01-19-preview",
+            "name": "[parameters('associatedRuleStackName')]",
+            "location": "[parameters('associatedRuleStackLocation')]",
+            "tags": "[variables('firewallTag')]",
+            "properties": {
+                "scope": "LOCAL",
+                "defaultMode": "[parameters('ruleStackDefaultMode')]"
+            }
+        },
+        {
+            "type": "PaloAltoNetworks.Cloudngfw/firewalls",
+            "apiVersion": "2024-01-19-preview",
+            "name": "[parameters('name')]",
+            "location": "[parameters('location')]",
+            "tags": "[variables('firewallTag')]",
+            "properties": "[if(equals(parameters('isPanoramaManaged'), 'FALSE'), createObject('networkProfile', variables('networkProfile'), 'associatedRulestack', createObject('resourceId', variables('associatedRuleStackId'), 'location', parameters('associatedRuleStackLocation')), 'dnsSettings', variables('dnsSettings'), 'planData', createObject('planId', first(filter(if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).plans, lambda('x', equals(lambdaVariables('x').planId, parameters('mpOfferId'))))).planId, 'usageType', 'PAYG', 'billingCycle', 'MONTHLY'), 'marketplaceDetails', createObject('offerId', if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).offerId, 'publisherId', if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).publisherId)), createObject('networkProfile', variables('networkProfile'), 'isPanoramaManaged', parameters('isPanoramaManaged'), 'panoramaConfig', createObject('configString', parameters('panoramaConfigString')), 'dnsSettings', variables('dnsSettings'), 'planData', createObject('planId', first(filter(if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).plans, lambda('x', equals(lambdaVariables('x').planId, parameters('mpOfferId'))))).planId, 'usageType', 'PAYG', 'billingCycle', 'MONTHLY'), 'marketplaceDetails', createObject('offerId', if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).offerId, 'publisherId', if(equals(parameters('mpOffer'), createObject()), reference(resourceId('Microsoft.Marketplace/offers', 'paloaltonetworks.pan_swfw_cloud_ngfw'), '2018-08-01-beta', 'full'), parameters('mpOffer')).publisherId)))]",
+            "dependsOn": [
+                "[resourceId('PaloAltoNetworks.Cloudngfw/localRulestacks', parameters('associatedRuleStackName'))]",
+                "[resourceId('Microsoft.Network/publicIPAddresses', parameters('publicIPAddressName'))]",
+                "[resourceId('Microsoft.Network/publicIPAddresses', parameters('natEPublicIPAddressName'))]",
+                "[resourceId('Microsoft.Network/networkVirtualAppliances', parameters('nvaName'))]",
+                "[resourceId('Microsoft.Network/virtualNetworks', parameters('virtualNetworkName'))]"
+            ]
+        }
+    ]
+}

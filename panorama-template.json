@@ -1,0 +1,253 @@
+{
+    "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+    "contentVersion": "1.0.0.0",
+    "parameters": {
+        "firewall_name": {
+            "defaultValue": "fw-pa-01",
+            "type": "String",
+            "metadata":{
+                "description": "The name of the firewall that will deployed."
+            }
+        },
+        "subscription_id": {
+            "defaultValue": "",
+            "type": "String",
+            "metadata":{
+                "description": "The subcription ID you would like the resrouce deployed in."
+            }
+        },
+        "deployment_location_name": {
+            "defaultValue": "centralus",
+            "type": "String",
+            "metadata":{
+                "description": "The nane of the region the resources will be deployed."
+            }
+        },
+        "hub_vnet_name": {
+            "defaultValue": "vnet-centralus-hub-01",
+            "type": "String",
+            "metadata":{
+                "description": "The name of the hub VNet where the FW private/public subnets reside."
+            }
+        },
+        "palo_private_subnet_name": {
+            "defaultValue": "snet-centralus-palopriv-hub-01",
+            "type": "String",
+            "metadata":{
+                "description": "The name of the existing trusted subnet for the firewall."
+            }
+        },
+        "palo_public_subnet_name": {
+            "defaultValue": "snet-centralus-palopub-hub-01",
+            "type": "String",
+            "metadata":{
+                "description": "The name of the existing untrusted subnet for the firewall."
+            }
+        },
+        "resource_group_name": {
+            "defaultValue": "palo",
+            "type": "String"
+        },
+        "public_ip_address_name": {
+            "type": "string",
+            "defaultValue": "pip-fw-centralus-pa-01"
+        },
+        "rg_ro_username": {
+            "type": "string",
+            "defaultValue": "un-centralus-ro-01",
+            "metadata":{
+                "description": "The service username that will be used to retrieve values in the resource group."
+            }
+        },
+        "panorama_config_string": {
+            "type": "string",
+            "defaultValue": "",
+            "metadata":{
+                "description": "The config string from Panorama."
+            }
+        },
+        "udr_name": {
+            "type": "string",
+            "defaultValue": "udr-centralus-pa-01",
+            "metadata":{
+                "description": "The name of the UDR for routing traffic to the firewall."
+            }
+        }
+    },
+    "variables": {
+        "vnet_resource_id":  "[concat('/subscriptions/', parameters('subscription_id'), '/resourceGroups/', parameters('resource_group_name'), '/providers/Microsoft.Network/virtualNetworks/', parameters('hub_vnet_name'))]",
+        "palo_trust_subnet_id": "[concat(variables('vnet_resource_id'), '/subnets/', parameters('palo_private_subnet_name'))]",  
+        "palo_untrust_subnet_id": "[concat(variables('vnet_resource_id'), '/subnets/', parameters('palo_public_subnet_name'))]",
+        "publicIPAddressId": [
+            {
+                "resourceId": "[resourceId('Microsoft.Network/publicIPAddresses', parameters('public_ip_address_name'))]"
+            }
+        ]
+    },
+    "resources": [
+        {
+            "type": "Microsoft.ManagedIdentity/userAssignedIdentities",
+            "apiVersion": "2023-07-31-preview",
+            "name": "[parameters('rg_ro_username')]",
+            "location": "[parameters('deployment_location_name')]"
+        },
+        {
+            "type": "Microsoft.Authorization/roleAssignments",
+            "apiVersion": "2020-04-01-preview",
+            "name": "[guid(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('rg_ro_username')), resourceGroup().id, 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+            "properties": {
+                "principalId": "[reference(resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('rg_ro_username'))).principalId]",
+                "roleDefinitionId": "[subscriptionResourceId('Microsoft.Authorization/roleDefinitions', 'acdd72a7-3385-48ef-bd42-f606fba81ae7')]",
+                "principalType": "ServicePrincipal"
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('rg_ro_username'))]"
+            ]
+        },
+        {
+            "type": "Microsoft.Resources/deploymentScripts",
+            "apiVersion": "2023-08-01",
+            "name": "subnet_prefix_lookup_script",
+            "location": "[parameters('deployment_location_name')]",
+            "kind": "AzurePowerShell",
+            "identity": {
+                "type": "UserAssigned",
+                "userAssignedIdentities": {
+                "[resourceId('Microsoft.ManagedIdentity/userAssignedIdentities', parameters('rg_ro_username'))]": {}
+                }
+            },
+            "properties": {
+                "cleanupPreference": "OnSuccess",
+                "retentionInterval": "PT1H",
+                "azPowerShellVersion": "7.1",
+                "scriptContent": "[concat('$vnet = Get-AzVirtualNetwork -Name ', parameters('hub_vnet_name'), '; $trustsubnet = $vnet.Subnets | Where-Object { $_.Name -eq \"', parameters('palo_private_subnet_name'), '\"}; $untrustsubnet = $vnet.Subnets | Where-Object { $_.Name -eq \"', parameters('palo_public_subnet_name'), '\"}; $DeploymentScriptOutputs = @{}; $DeploymentScriptOutputs[\"trust\"] = $trustsubnet.AddressPrefix; $DeploymentScriptOutputs[\"untrust\"] = $untrustsubnet.AddressPrefix;')]",
+                "supportsPremium": false
+            },
+            
+            "dependsOn": []
+        },
+        {
+            "type": "Microsoft.Network/publicIPAddresses",
+            "apiVersion": "2020-11-01",
+            "name": "[parameters('public_ip_address_name')]",
+            "location": "[parameters('deployment_location_name')]",
+            "sku": {
+                "name": "Standard"
+            },
+            "properties": {
+                "publicIPAllocationMethod": "Static"
+            }
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks/subnets",
+            "apiVersion": "2023-02-01",
+            "name": "[concat(parameters('hub_vnet_name'), '/', parameters('palo_private_subnet_name'))]",
+            "location": "[parameters('deployment_location_name')]",
+            "properties": {
+                "addressPrefix": "[reference('subnet_prefix_lookup_script').outputs.trust[0]]",
+                "delegations": [
+                    {
+                        "name": "palo-firewall-delicgation",
+                        "properties": {
+                            "serviceName": "PaloAltoNetworks.Cloudngfw/firewalls"
+                        }
+                    }
+                ]
+            },
+            "dependsOn": [ "[resourceId('Microsoft.Resources/deploymentScripts', 'subnet_prefix_lookup_script')]" ]
+        },
+        {
+            "type": "Microsoft.Network/virtualNetworks/subnets",
+            "apiVersion": "2023-02-01",
+            "name": "[concat(parameters('hub_vnet_name'), '/', parameters('palo_public_subnet_name'))]",
+            "location": "[parameters('deployment_location_name')]",
+            "properties": {
+                "addressPrefix": "[reference('subnet_prefix_lookup_script').outputs.untrust[0]]",
+                "delegations": [
+                    {
+                        "name": "palo-firewall-delicgation",
+                        "properties": {
+                            "serviceName": "PaloAltoNetworks.Cloudngfw/firewalls"
+                        }
+                    }
+                ]
+            }
+        },
+        {
+            "type": "PaloAltoNetworks.Cloudngfw/firewalls",
+            "apiVersion": "2024-01-19-preview",
+            "name": "[parameters('firewall_name')]",
+            "location": "[parameters('deployment_location_name')]",
+            "tags": {},
+            "properties": {
+                "networkProfile": {
+                    "vnetConfiguration": {
+                        "vnet": {
+                            "resourceId": "[variables('vnet_resource_id')]"
+                        },
+                        "trustSubnet": {
+                            "resourceId": "[variables('palo_trust_subnet_id')]"
+                        },
+                        "unTrustSubnet": {
+                            "resourceId": "[variables('palo_untrust_subnet_id')]"
+                        }
+                    },
+                    "networkType": "VNET",
+                    "publicIps": "[variables('publicIPAddressId')]",
+                    "enableEgressNat": "ENABLED",
+                    "egressNatIp": "[variables('publicIPAddressId')]",
+                    "privateSourceNatRulesDestination": []
+                },
+                "dnsSettings": {
+                    "enableDnsProxy": "DISABLED",
+                    "enabledDnsType": "CUSTOM"
+                },
+                "isPanoramaManaged": "TRUE",
+                "isStrataCloudManaged": "FALSE",
+                "panoramaConfig": {
+                    "configString": "[parameters('panorama_config_string')]"
+                },
+                "planData": {
+                    "usageType": "PAYG",
+                    "billingCycle": "MONTHLY",
+                    "planId": "panw-cloud-ngfw-payg"
+                },
+                "marketplaceDetails": {
+                    "offerId": "pan_swfw_cloud_ngfw",
+                    "publisherId": "paloaltonetworks",
+                    "marketplaceSubscriptionStatus": "Subscribed"
+                }
+            },
+            "dependsOn": [
+                "[resourceId('Microsoft.Network/publicIPAddresses', parameters('public_ip_address_name'))]",
+                "[resourceId('Microsoft.Resources/deploymentScripts', 'subnet_prefix_lookup_script')]"
+            ]
+        },
+        {
+            "apiVersion": "2019-02-01",
+            "type": "Microsoft.Network/routeTables",
+            "name": "[parameters('udr_name')]",
+            "location": "[parameters('deployment_location_name')]",
+            "properties": {
+                "disableBgpRoutePropagation": true,
+                "routes": [
+                    {
+                        "name": "default",
+                        "id": "[resourceId('Microsoft.Network/routeTables/routes', parameters('udr_name'), 'default')]",
+                        "properties": {
+                            "addressPrefix": "0.0.0.0/0",
+                            "nextHopType": "VirtualAppliance",
+                            "nextHopIpAddress": "[reference(parameters('firewall_name')).networkProfile.vnetConfiguration.ipOfTrustSubnetForUdr.address]",
+                            "hasBgpOverride": false
+                        },
+                        "type": "Microsoft.Network/routeTables/routes"
+                    }
+                ]
+            },
+            "dependsOn": [
+                "[resourceId('PaloAltoNetworks.Cloudngfw/firewalls', parameters('firewall_name'))]"
+            ]
+        }
+    ],
+    "outputs": {}
+}
